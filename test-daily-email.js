@@ -1,7 +1,16 @@
 // Test Daily Email Script
 // Run this while logged into your app in the browser
+// Usage: node test-daily-email.js
 
-const CRON_SECRET = 'a0d3b1d481fea75f326ef7c697ec44c9e5eeec2c21519536bc9d8ee54927064f';
+require('dotenv').config({ path: '.env.local' });
+
+const CRON_SECRET = process.env.CRON_SECRET;
+
+if (!CRON_SECRET) {
+  console.error('❌ Error: CRON_SECRET environment variable is not set');
+  console.log('Please set it in your .env.local file');
+  process.exit(1);
+}
 
 async function testDailyEmail() {
   console.log('Testing daily email endpoint...\n');
