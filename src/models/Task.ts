@@ -9,6 +9,7 @@ export interface ITask extends Document {
   taskType: 'General' | 'Follow-up' | 'Phone Call' | 'Contract Review' | 'Proposal' | 'Billing' | 'Management Change' | '60 Day Visit';
   address?: string;
   assignedTo?: mongoose.Types.ObjectId;
+  assignedTeam?: mongoose.Types.ObjectId[]; // Up to 4 people can work on a task
   property?: mongoose.Types.ObjectId;
   contact?: mongoose.Types.ObjectId;
   company?: mongoose.Types.ObjectId;
@@ -42,6 +43,7 @@ const TaskSchema = new Schema<ITask>(
     },
     address: String,
     assignedTo: { type: Schema.Types.ObjectId, ref: 'User' },
+    assignedTeam: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     property: { type: Schema.Types.ObjectId, ref: 'Property' },
     contact: { type: Schema.Types.ObjectId, ref: 'Contact' },
     company: { type: Schema.Types.ObjectId, ref: 'Company' },

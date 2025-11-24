@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, CheckCircle2, Clock, User, Building2, MapPin, FileText, Plus } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, User, Building2, MapPin, FileText, Plus, Edit2, X, UserPlus } from 'lucide-react';
 
 export default function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -19,12 +19,24 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [newNote, setNewNote] = useState('');
   const [addingNote, setAddingNote] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [editingDueDate, setEditingDueDate] = useState(false);
+  const [newDueDate, setNewDueDate] = useState('');
+  const [addingTeamMember, setAddingTeamMember] = useState(false);
 
   const { data: task, isLoading } = useQuery({
     queryKey: ['task', id],
     queryFn: async () => {
       const res = await fetch(`/api/tasks/${id}`);
       if (!res.ok) throw new Error('Failed to fetch task');
+      return res.json();
+    },
+  });
+
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const res = await fetch('/api/users');
+      if (!res.ok) throw new Error('Failed to fetch users');
       return res.json();
     },
   });
@@ -73,6 +85,75 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       alert('Failed to add note');
     } finally {
       setAddingNote(false);
+    }
+  };
+
+  const handleUpdateDueDate = async () => {
+    if (!newDueDate) return;
+
+    try {
+      const res = await fetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dueDate: new Date(newDueDate) }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update due date');
+
+      setEditingDueDate(false);
+      setNewDueDate('');
+      await queryClient.invalidateQueries({ queryKey: ['task', id] });
+      await queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    } catch (error) {
+      console.error('Error updating due date:', error);
+      alert('Failed to update due date');
+    }
+  };
+
+  const handleAddTeamMember = async (userId: string) => {
+    const currentTeam = task.assignedTeam || [];
+    if (currentTeam.length >= 4) {
+      alert('Maximum 4 team members allowed');
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          assignedTeam: [...currentTeam.map((m: any) => m._id || m), userId]
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to add team member');
+
+      await queryClient.invalidateQueries({ queryKey: ['task', id] });
+      setAddingTeamMember(false);
+    } catch (error) {
+      console.error('Error adding team member:', error);
+      alert('Failed to add team member');
+    }
+  };
+
+  const handleRemoveTeamMember = async (userId: string) => {
+    const currentTeam = task.assignedTeam || [];
+    
+    try {
+      const res = await fetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          assignedTeam: currentTeam.filter((m: any) => (m._id || m).toString() !== userId)
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to remove team member');
+
+      await queryClient.invalidateQueries({ queryKey: ['task', id] });
+    } catch (error) {
+      console.error('Error removing team member:', error);
+      alert('Failed to remove team member');
     }
   };
 
@@ -214,25 +295,119 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
                 
-                {task.dueDate && (
-                  <div>
-                    <div className="text-sm font-medium text-gray-600 mb-1">Due Date</div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-sm font-medium text-gray-600">Due Date</div>
+                    {!editingDueDate && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEditingDueDate(true);
+                          setNewDueDate(task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : '');
+                        }}
+                        className="h-6 px-2"
+                      >
+                        <Edit2 className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                  {editingDueDate ? (
+                    <div className="flex gap-2">
+                      <Input
+                        type="date"
+                        value={newDueDate}
+                        onChange={(e) => setNewDueDate(e.target.value)}
+                        className="text-sm"
+                      />
+                      <Button size="sm" onClick={handleUpdateDueDate}>Save</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditingDueDate(false)}>Cancel</Button>
+                    </div>
+                  ) : (
                     <div className="flex items-center gap-2 text-sm text-gray-900">
                       <Clock className="h-4 w-4" />
-                      {new Date(task.dueDate).toLocaleDateString()}
+                      {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No due date set'}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {task.assignedTo && (
                   <div>
-                    <div className="text-sm font-medium text-gray-600 mb-1">Assigned To</div>
+                    <div className="text-sm font-medium text-gray-600 mb-1">Primary Assignee</div>
                     <div className="flex items-center gap-2 text-sm text-gray-900">
                       <User className="h-4 w-4" />
                       {task.assignedTo.name || task.assignedTo.email}
                     </div>
                   </div>
                 )}
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-medium text-gray-600">Team Members ({(task.assignedTeam?.length || 0)}/4)</div>
+                    {!addingTeamMember && (task.assignedTeam?.length || 0) < 4 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setAddingTeamMember(true)}
+                        className="h-6 px-2"
+                      >
+                        <UserPlus className="h-3 w-3 mr-1" />
+                        Add
+                      </Button>
+                    )}
+                  </div>
+                  
+                  {addingTeamMember && users && (
+                    <div className="mb-2">
+                      <Select onValueChange={(value) => handleAddTeamMember(value)}>
+                        <SelectTrigger className="w-full text-sm">
+                          <SelectValue placeholder="Select team member..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {users.filter((u: any) => 
+                            u._id !== task.assignedTo?._id && 
+                            !task.assignedTeam?.some((m: any) => (m._id || m).toString() === u._id)
+                          ).map((user: any) => (
+                            <SelectItem key={user._id} value={user._id}>
+                              {user.name || user.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => setAddingTeamMember(false)}
+                        className="mt-1 h-6 text-xs"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+
+                  {task.assignedTeam && task.assignedTeam.length > 0 ? (
+                    <div className="space-y-2">
+                      {task.assignedTeam.map((member: any) => (
+                        <div key={member._id} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                          <div className="flex items-center gap-2 text-sm">
+                            <User className="h-4 w-4 text-gray-400" />
+                            <span>{member.name || member.email}</span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRemoveTeamMember(member._id)}
+                            className="h-6 w-6 p-0 hover:bg-red-100"
+                          >
+                            <X className="h-3 w-3 text-red-600" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500 italic">No team members added</div>
+                  )}
+                </div>
 
                 <div>
                   <div className="text-sm font-medium text-gray-600 mb-1">Created By</div>

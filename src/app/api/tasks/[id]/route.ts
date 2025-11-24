@@ -19,6 +19,7 @@ export async function GET(
 
     const task = await Task.findById(id)
       .populate('assignedTo', 'name email')
+      .populate('assignedTeam', 'name email')
       .populate('property', 'name propertyName')
       .populate('contact', 'firstName lastName email')
       .populate('company', 'name')
@@ -56,6 +57,7 @@ export async function PATCH(
       { new: true, runValidators: true }
     )
       .populate('assignedTo', 'name email')
+      .populate('assignedTeam', 'name email')
       .populate('property', 'name propertyName')
       .populate('contact', 'firstName lastName email')
       .populate('company', 'name')
