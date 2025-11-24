@@ -16,21 +16,12 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    // Get today's date range
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    // Get all tasks due today for the user
+    // Get all pending tasks for the user (not closed)
     const tasks = await Task.find({
       assignedTo: session.user.id,
-      dueDate: {
-        $gte: today,
-        $lt: tomorrow,
-      },
       status: { $ne: 'Closed' },
     })
+      .sort({ dueDate: 1, priority: -1 }) // Sort by due date, then priority
       .populate('property', 'name address')
       .populate('contact', 'firstName lastName email phone')
       .populate('company', 'name')
@@ -158,7 +149,7 @@ export async function POST(request: NextRequest) {
     await sgMail.send({
       to: user.email,
       from: process.env.SENDGRID_FROM_EMAIL || 'noreply@trashtasker.com',
-      subject: `📋 Your Daily Tasks - ${tasks.length} task${tasks.length > 1 ? 's' : ''} for ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      subject: `📋 Your Pending Tasks - ${tasks.length} task${tasks.length > 1 ? 's' : ''} for ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
       html: emailHtml,
     });
 
@@ -178,7 +169,13 @@ export async function GET(request: NextRequest) {
   try {
     // Verify this is being called by a cron service with auth token
     const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    const expectedAuth = `Bearer ${process.env.CRON_SECRET}`;
+    
+    console.log('Auth Header:', authHeader);
+    console.log('Expected:', expectedAuth);
+    console.log('CRON_SECRET exists:', !!process.env.CRON_SECRET);
+    
+    if (authHeader !== expectedAuth) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -191,29 +188,127 @@ export async function GET(request: NextRequest) {
 
     for (const user of users) {
       try {
-        // Get today's tasks for this user
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
+        // Get all pending tasks for this user (not closed)
         const tasks = await Task.find({
           assignedTo: user._id,
-          dueDate: {
-            $gte: today,
-            $lt: tomorrow,
-          },
           status: { $ne: 'Closed' },
-        }).populate('property contact company');
+        })
+        .sort({ dueDate: 1, priority: -1 }) // Sort by due date, then priority
+        .populate('property contact company');
 
         if (tasks.length === 0) continue;
 
-        // Send email (reuse logic from POST)
-        // ... (same email generation logic)
+        console.log(`📧 Sending email to: ${user.email} with ${tasks.length} tasks`);
+
+        // Generate task list HTML
+        let taskListHtml = '';
+        tasks.forEach((task: any) => {
+          const priorityColors = {
+            High: { color: '#dc2626', bg: '#fee2e2' },
+            Medium: { color: '#f59e0b', bg: '#fef3c7' },
+            Low: { color: '#10b981', bg: '#d1fae5' }
+          };
+          const { color: priorityColor, bg: priorityBg } = priorityColors[task.priority as keyof typeof priorityColors] || priorityColors.Low;
+          
+          const address = task.address || (task.property?.address?.street ? 
+            `${task.property.address.street}, ${task.property.address.city || ''} ${task.property.address.state || ''}`.trim() 
+            : '');
+
+          taskListHtml += `
+            <div style="background: white; border-left: 4px solid ${priorityColor}; padding: 16px; margin-bottom: 12px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+              <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: #111827;">${task.title}</h3>
+                <span style="background: ${priorityBg}; color: ${priorityColor}; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
+                  ${task.priority}
+                </span>
+              </div>
+              
+              <div style="color: #6b7280; font-size: 14px; margin-bottom: 8px;">
+                <span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; margin-right: 8px;">
+                  ${task.taskType}
+                </span>
+                <span style="background: #eff6ff; color: #2563eb; padding: 4px 8px; border-radius: 4px;">
+                  ${task.status}
+                </span>
+              </div>
+
+              ${task.description ? `<p style="color: #4b5563; font-size: 14px; margin: 8px 0;">${task.description}</p>` : ''}
+              
+              ${address ? `
+                <div style="color: #6b7280; font-size: 13px; margin-top: 8px;">
+                  📍 ${address}
+                </div>
+              ` : ''}
+
+              ${task.property ? `
+                <div style="color: #6b7280; font-size: 13px; margin-top: 4px;">
+                  <strong>Property:</strong> ${task.property.name}
+                </div>
+              ` : ''}
+
+              ${task.contact ? `
+                <div style="color: #6b7280; font-size: 13px; margin-top: 4px;">
+                  <strong>Contact:</strong> ${task.contact.firstName} ${task.contact.lastName}
+                  ${task.contact.phone ? ` • ${task.contact.phone}` : ''}
+                </div>
+              ` : ''}
+            </div>
+          `;
+        });
+
+        const emailHtml = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            </head>
+            <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f9fafb;">
+              <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
+                  <h1 style="color: white; margin: 0; font-size: 24px;">📋 Your Pending Tasks</h1>
+                  <p style="color: #e0e7ff; margin: 8px 0 0 0; font-size: 14px;">
+                    ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                  </p>
+                </div>
+
+                <div style="background: #f9fafb; padding: 24px; border-radius: 0 0 8px 8px;">
+                  <p style="color: #374151; font-size: 16px; margin: 0 0 20px 0;">
+                    Good morning! You have <strong>${tasks.length} pending task${tasks.length > 1 ? 's' : ''}</strong>.
+                  </p>
+
+                  ${taskListHtml}
+
+                  <div style="text-align: center; margin-top: 24px;">
+                    <a href="${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard" 
+                       style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
+                      View Dashboard
+                    </a>
+                  </div>
+                </div>
+
+                <div style="text-align: center; padding: 16px; color: #9ca3af; font-size: 12px;">
+                  <p style="margin: 0;">
+                    TrashTasker Daily Task Notification
+                  </p>
+                </div>
+              </div>
+            </body>
+          </html>
+        `;
+
+        await sgMail.send({
+          to: user.email,
+          from: process.env.SENDGRID_FROM_EMAIL || 'noreply@trashtasker.com',
+          subject: `📋 Your Pending Tasks - ${tasks.length} task${tasks.length > 1 ? 's' : ''} for ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+          html: emailHtml,
+        });
         
+        console.log(`✅ Email sent successfully to ${user.email}`);
         emailsSent++;
       } catch (error) {
-        console.error(`Error sending email to ${user.email}:`, error);
+        console.error(`❌ Error sending email to ${user.email}:`, error);
         errors++;
       }
     }
